@@ -13,14 +13,15 @@ from openpyxl.styles import Font
 # --------------------- CONFIGURATION ---------------------
 YOUR_EMAIL = os.environ.get('EMAIL_USER')
 APP_PASSWORD = os.environ.get('EMAIL_PASS')
-TO_EMAIL = "priyansh.khandelwal@rosierfoods.com" # <--- Yaha receiver ka email dalein
+TO_EMAIL = "priyanshkhandelwal@rosierfoods.com" # <--- Receiver Email yaha dalein
 
 EXCEL_FILE = "blinkit_rosier_products.xlsx"
 HTML_FILE = "blinkit.html"
 
+# Security Check
 if not YOUR_EMAIL or not APP_PASSWORD:
-    print("Error: GitHub Secrets set nahi hain!")
-    exit()
+    # Local run ke liye agar environment variable set nahi hai to error na de (for testing)
+    pass 
 
 # --------------------- SCRAPING LOGIC ---------------------
 print("Reading HTML file...")
@@ -32,8 +33,9 @@ except FileNotFoundError:
     exit()
 
 soup = BeautifulSoup(html_content, 'html.parser')
-product_containers = soup.find_all('div', attrs={'role': 'button', 'tabindex': '0'})
 
+# Container dhundne ka logic
+product_containers = soup.find_all('div', attrs={'role': 'button', 'tabindex': '0'})
 print(f"Total containers found: {len(product_containers)}")
 
 product_details = []
@@ -46,22 +48,38 @@ for container in product_containers:
     
     product_name = title_div.get_text(strip=True)
     
-    # Filter
+    # Filter: Only Rosier
     if 'rosier' not in product_name.lower():
         continue
 
-    # 2. LINK Extraction (Naya Code)
-    # Hum container ke andar 'a' tag dhund rahe hain jisme link ho
+    # ============================================================
+    # 2. LINK EXTRACTION (UPDATED - AGGRESSIVE SEARCH)
+    # ============================================================
     product_url = None
+    
+    # Tarika A: Kya container ke andar koi 'a' tag hai?
     link_tag = container.find('a', href=True)
     
-    # Agar andar link nahi mila, to check karein shayad parent element 'a' tag ho
+    # Tarika B: Agar andar nahi, to kya container khud kisi 'a' tag ke andar hai? (Parent)
     if not link_tag:
         link_tag = container.find_parent('a', href=True)
+        
+    # Tarika C: Title div ke aas paas dhundo
+    if not link_tag:
+        link_tag = title_div.find_parent('a', href=True)
 
+    # Agar link mil gaya to URL banayein
     if link_tag:
-        # Blinkit ke links relative hote hain (/prn/...), hume domain add karna hoga
-        product_url = "https://blinkit.com" + link_tag['href']
+        href_val = link_tag['href']
+        if href_val.startswith('/'):
+            product_url = "https://blinkit.com" + href_val
+        else:
+            product_url = href_val
+    else:
+        # Debugging ke liye: Pata chale kyu nahi mila
+        print(f"Warning: Link nahi mila for -> {product_name}")
+
+    # ============================================================
 
     # 3. Variant Extraction
     variant = "-"
@@ -104,68 +122,59 @@ for container in product_containers:
         "Variant": variant.strip(),
         "Price": price,
         "Stock": stock_status,
-        "Hidden_URL": product_url # Ye column hum baad me delete kar denge
+        "Hidden_URL": product_url
     })
 
-# --------------------- EXCEL GENERATION & STYLING ---------------------
+# --------------------- EXCEL GENERATION ---------------------
 if product_details:
     df = pd.DataFrame(product_details)
     
-    # Step A: Normal Excel save
+    # Excel Save
     df.to_excel(EXCEL_FILE, index=False)
     
-    # Step B: OpenPyXL se Hyperlink lagana
+    # Hyperlink Styling
     wb = load_workbook(EXCEL_FILE)
     ws = wb.active
     
-    # Row 2 se start karenge (Row 1 Header hai)
     for row in ws.iter_rows(min_row=2, max_row=ws.max_row):
         title_cell = row[0]       # Column A (Title)
-        url_cell = row[4]         # Column E (Hidden_URL) - index 4 kyunki 0,1,2,3,4
+        url_cell = row[4]         # Column E (Hidden_URL)
         
+        # Check karein ki URL cell khali to nahi hai
         if url_cell.value:
-            # Title cell par link lagana
             title_cell.hyperlink = url_cell.value
-            # Blue color aur Underline style dena
             title_cell.font = Font(color="0000FF", underline="single")
-            
-    # Step C: URL wala column delete kar dena (taaki file saaf dikhe)
-    ws.delete_cols(5) # 5th Column (Hidden_URL) delete
-    
-    wb.save(EXCEL_FILE)
-    print(f"Data saved to → {EXCEL_FILE} with Hyperlinks.")
+        else:
+            # Agar URL nahi mila to Red color kar do taaki pata chale
+            title_cell.font = Font(color="FF0000") 
 
+    ws.delete_cols(5) # URL column delete
+    wb.save(EXCEL_FILE)
+    print(f"Data saved with Links to → {EXCEL_FILE}")
 else:
-    print("Koi bhi Rosier product nahi mila.")
+    print("No Rosier products found.")
     exit()
 
 # --------------------- EMAIL SENDING ---------------------
-print("Sending Email...")
+if not YOUR_EMAIL or not APP_PASSWORD:
+    print("Skipping Email (No Credentials). File saved locally.")
+    exit()
 
+print("Sending Email...")
 msg = MIMEMultipart()
 msg['From'] = YOUR_EMAIL
 msg['To'] = TO_EMAIL
-msg['Subject'] = 'Blinkit - Latest Rosier Products List'
+msg['Subject'] = 'Blinkit - Latest Rosier Products'
 
-body = f"""Hi Automailer,
-
-PFA Rosier Blinkit products.
-Click on the 'Title' in Excel to open the product page.
-
-Total Products: {len(product_details)}
-
-Regards,
-Priyansh
-"""
+body = f"Hi Automailer PFA Rosier blinkit products.\nTotal: {len(product_details)}"
 msg.attach(MIMEText(body, 'plain'))
 
-if os.path.exists(EXCEL_FILE):
-    with open(EXCEL_FILE, 'rb') as attachment:
-        part = MIMEBase('application', 'octet-stream')
-        part.set_payload(attachment.read())
-    encoders.encode_base64(part)
-    part.add_header('Content-Disposition', f'attachment; filename={EXCEL_FILE}')
-    msg.attach(part)
+with open(EXCEL_FILE, 'rb') as attachment:
+    part = MIMEBase('application', 'octet-stream')
+    part.set_payload(attachment.read())
+encoders.encode_base64(part)
+part.add_header('Content-Disposition', f'attachment; filename={EXCEL_FILE}')
+msg.attach(part)
 
 try:
     server = smtplib.SMTP('smtp.gmail.com', 587)
@@ -173,6 +182,6 @@ try:
     server.login(YOUR_EMAIL, APP_PASSWORD)
     server.send_message(msg)
     server.quit()
-    print(f"Success! Email sent to {TO_EMAIL}")
+    print("Email Sent!")
 except Exception as e:
     print(f"Email Failed: {e}")
