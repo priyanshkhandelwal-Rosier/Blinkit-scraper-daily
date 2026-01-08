@@ -13,7 +13,7 @@ from openpyxl.styles import Font
 # --------------------- CONFIGURATION ---------------------
 YOUR_EMAIL = os.environ.get('EMAIL_USER')
 APP_PASSWORD = os.environ.get('EMAIL_PASS')
-TO_EMAIL = "priyansh.khandelwal@rosierfoods.com"
+TO_EMAIL = "Rosierfoods@gmail.com"
 
 EXCEL_FILE = "blinkit_rosier_products.xlsx"
 HTML_FILE = "blinkit.html"
