@@ -13,12 +13,12 @@ from openpyxl.styles import Font
 # --------------------- CONFIGURATION ---------------------
 YOUR_EMAIL = os.environ.get('EMAIL_USER')
 APP_PASSWORD = os.environ.get('EMAIL_PASS')
-TO_EMAIL = "priyansh.khandelwal@rosierfoods.com" # Receiver Email
+TO_EMAIL = "priyansh.khandelwal@rosierfoods.com"
 
 EXCEL_FILE = "blinkit_rosier_products.xlsx"
 HTML_FILE = "blinkit.html"
 
-# Security Check (Local testing ke liye pass kar diya)
+# Security Check
 if not YOUR_EMAIL or not APP_PASSWORD:
     pass 
 
@@ -33,7 +33,6 @@ except FileNotFoundError:
 
 soup = BeautifulSoup(html_content, 'html.parser')
 
-# Container dhundne ka logic
 product_containers = soup.find_all('div', attrs={'role': 'button', 'tabindex': '0'})
 print(f"Total containers found: {len(product_containers)}")
 
@@ -47,33 +46,36 @@ for container in product_containers:
     
     product_name = title_div.get_text(strip=True)
     
-    # Filter: Only Rosier
     if 'rosier' not in product_name.lower():
         continue
 
     # ============================================================
-    # 2. LINK EXTRACTION (BEST LOGIC)
+    # 2. LINK EXTRACTION (ULTIMATE FALLBACK LOGIC)
     # ============================================================
     product_url = None
+    link_tag = None
     
-    # Check 1: Kya container ke andar koi 'a' tag hai?
+    # LEVEL 1: Container ke andar dhundo
     link_tag = container.find('a', href=True)
     
-    # Check 2: Agar andar nahi, to kya container khud 'a' tag ke andar hai? (Parent)
+    # LEVEL 2: Container ke parent me dhundo
     if not link_tag:
         link_tag = container.find_parent('a', href=True)
-        
-    # Check 3: Title div ke parent me dhundo
-    if not link_tag:
-        link_tag = title_div.find_parent('a', href=True)
 
-    # URL Banan
+    # LEVEL 3 (Brahmastra): Pure Title Text se Link dhundo
+    # Logic: Pure page me aisa 'a' tag dhundo jiske andar ye Product Name likha ho
+    if not link_tag:
+        # Hum us element ko dhundenge jisme exact product name hai
+        text_element = soup.find(string=re.compile(re.escape(product_name)))
+        if text_element:
+            # Us text ka parent 'a' tag dhundo
+            link_tag = text_element.find_parent('a', href=True)
+
+    # URL Create karna
     if link_tag:
         href_val = link_tag['href'].strip()
-        
-        # Blinkit ke links relative hote hain (/prn/...)
         if href_val.startswith("http"):
-             product_url = href_val
+            product_url = href_val
         elif href_val.startswith("/"):
             product_url = "https://blinkit.com" + href_val
         else:
@@ -81,20 +83,18 @@ for container in product_containers:
             
     # ============================================================
 
-    # 3. Variant Extraction
+    # 3. Variant
     variant = "-"
     next_div = title_div.find_next_sibling('div')
     if next_div:
         text = next_div.get_text(strip=True)
         if any(unit in text.lower() for unit in ['kg', 'g', 'ml', 'l', 'pack', 'piece', 'pcs']):
             variant = text
-    
     if variant == "-":
         container_text = container.get_text(separator=" ", strip=True)
         match = re.search(r'(\d+(?:\.\d+)?\s*(?:kg|g|ml|l|piece|pack|pcs|bottle|jar|box|kgx|gx|ltr|litre|kilogram))\b', container_text, re.IGNORECASE)
         if match:
             variant = match.group(1).strip()
-
     if variant == "-" and any(unit in product_name.lower() for unit in ['kg', 'g', 'ml', 'l']):
         words = product_name.split()
         for i in range(len(words)-1, -1, -1):
@@ -125,56 +125,51 @@ for container in product_containers:
         "Hidden_URL": product_url
     })
 
-# --------------------- EXCEL GENERATION & HYPERLINKING ---------------------
+# --------------------- EXCEL GENERATION ---------------------
 if product_details:
     df = pd.DataFrame(product_details)
     df.to_excel(EXCEL_FILE, index=False)
     
-    # OpenPyXL se Hyperlink set karna
     wb = load_workbook(EXCEL_FILE)
     ws = wb.active
     
     for row in ws.iter_rows(min_row=2, max_row=ws.max_row):
-        title_cell = row[0]       # Column A (Title)
-        url_cell = row[4]         # Column E (Hidden_URL)
+        title_cell = row[0] # Column A
+        url_cell = row[4]   # Column E
         
         if url_cell.value:
-            # 1. Hyperlink set karo
             title_cell.hyperlink = url_cell.value
-            # 2. Style set karo (Blue + Underline) taaki link jaisa dikhe
             title_cell.font = Font(color="0000FF", underline="single")
         else:
-            # Debugging: Agar link nahi mila to text Red ho jayega
-            title_cell.font = Font(color="FF0000") 
+            # Agar abhi bhi Red hai, to file me link hi nahi hai
+            title_cell.font = Font(color="FF0000", bold=True)
+            print(f"Warning: No Link found for {title_cell.value}")
 
-    ws.delete_cols(5) # Hidden URL column delete kar do
+    ws.delete_cols(5)
     wb.save(EXCEL_FILE)
-    print(f"Data saved with Links to → {EXCEL_FILE}")
+    print(f"Data saved to → {EXCEL_FILE}")
 else:
     print("No Rosier products found.")
     exit()
 
 # --------------------- EMAIL SENDING ---------------------
 if not YOUR_EMAIL or not APP_PASSWORD:
-    print("Skipping Email (No Credentials). File saved locally.")
+    print("Skipping Email (No Credentials).")
     exit()
 
 print("Sending Email...")
 msg = MIMEMultipart()
 msg['From'] = YOUR_EMAIL
 msg['To'] = TO_EMAIL
-msg['Subject'] = 'Blinkit - Latest Rosier Products (Hyperlinked)'
-
-body = f"Hi Automailer PFA Rosier blinkit products.\nC\nTotal: {len(product_details)}"
+msg['Subject'] = 'Blinkit - Latest Rosier Products'
+body = f"Hi Automailer PFA Rosier blinkit products.\nTotal: {len(product_details)}"
 msg.attach(MIMEText(body, 'plain'))
-
 with open(EXCEL_FILE, 'rb') as attachment:
     part = MIMEBase('application', 'octet-stream')
     part.set_payload(attachment.read())
 encoders.encode_base64(part)
 part.add_header('Content-Disposition', f'attachment; filename={EXCEL_FILE}')
 msg.attach(part)
-
 try:
     server = smtplib.SMTP('smtp.gmail.com', 587)
     server.starttls()
