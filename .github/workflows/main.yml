@@ -3,7 +3,7 @@ name: Run Blinkit Scraper
 on:
   schedule:
     # Rozana shaam 5:40 PM IST (UTC time: 12:10 PM)
-    - cron: '* 8 * * *'
+    - cron: '* * * 2 1'
   workflow_dispatch: # Manual Button
 
 jobs:
