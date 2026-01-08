@@ -13,14 +13,13 @@ from openpyxl.styles import Font
 # --------------------- CONFIGURATION ---------------------
 YOUR_EMAIL = os.environ.get('EMAIL_USER')
 APP_PASSWORD = os.environ.get('EMAIL_PASS')
-TO_EMAIL = "priyansh.khandelwal@rosierfoods.com" # <--- Receiver Email yaha dalein
+TO_EMAIL = "priyansh.khandelwal@rosierfoods.com" # Receiver Email
 
 EXCEL_FILE = "blinkit_rosier_products.xlsx"
 HTML_FILE = "blinkit.html"
 
-# Security Check
+# Security Check (Local testing ke liye pass kar diya)
 if not YOUR_EMAIL or not APP_PASSWORD:
-    # Local run ke liye agar environment variable set nahi hai to error na de (for testing)
     pass 
 
 # --------------------- SCRAPING LOGIC ---------------------
@@ -53,32 +52,33 @@ for container in product_containers:
         continue
 
     # ============================================================
-    # 2. LINK EXTRACTION (UPDATED - AGGRESSIVE SEARCH)
+    # 2. LINK EXTRACTION (BEST LOGIC)
     # ============================================================
     product_url = None
     
-    # Tarika A: Kya container ke andar koi 'a' tag hai?
+    # Check 1: Kya container ke andar koi 'a' tag hai?
     link_tag = container.find('a', href=True)
     
-    # Tarika B: Agar andar nahi, to kya container khud kisi 'a' tag ke andar hai? (Parent)
+    # Check 2: Agar andar nahi, to kya container khud 'a' tag ke andar hai? (Parent)
     if not link_tag:
         link_tag = container.find_parent('a', href=True)
         
-    # Tarika C: Title div ke aas paas dhundo
+    # Check 3: Title div ke parent me dhundo
     if not link_tag:
         link_tag = title_div.find_parent('a', href=True)
 
-    # Agar link mil gaya to URL banayein
+    # URL Banan
     if link_tag:
-        href_val = link_tag['href']
-        if href_val.startswith('/'):
+        href_val = link_tag['href'].strip()
+        
+        # Blinkit ke links relative hote hain (/prn/...)
+        if href_val.startswith("http"):
+             product_url = href_val
+        elif href_val.startswith("/"):
             product_url = "https://blinkit.com" + href_val
         else:
-            product_url = href_val
-    else:
-        # Debugging ke liye: Pata chale kyu nahi mila
-        print(f"Warning: Link nahi mila for -> {product_name}")
-
+            product_url = "https://blinkit.com/" + href_val
+            
     # ============================================================
 
     # 3. Variant Extraction
@@ -125,14 +125,12 @@ for container in product_containers:
         "Hidden_URL": product_url
     })
 
-# --------------------- EXCEL GENERATION ---------------------
+# --------------------- EXCEL GENERATION & HYPERLINKING ---------------------
 if product_details:
     df = pd.DataFrame(product_details)
-    
-    # Excel Save
     df.to_excel(EXCEL_FILE, index=False)
     
-    # Hyperlink Styling
+    # OpenPyXL se Hyperlink set karna
     wb = load_workbook(EXCEL_FILE)
     ws = wb.active
     
@@ -140,15 +138,16 @@ if product_details:
         title_cell = row[0]       # Column A (Title)
         url_cell = row[4]         # Column E (Hidden_URL)
         
-        # Check karein ki URL cell khali to nahi hai
         if url_cell.value:
+            # 1. Hyperlink set karo
             title_cell.hyperlink = url_cell.value
+            # 2. Style set karo (Blue + Underline) taaki link jaisa dikhe
             title_cell.font = Font(color="0000FF", underline="single")
         else:
-            # Agar URL nahi mila to Red color kar do taaki pata chale
+            # Debugging: Agar link nahi mila to text Red ho jayega
             title_cell.font = Font(color="FF0000") 
 
-    ws.delete_cols(5) # URL column delete
+    ws.delete_cols(5) # Hidden URL column delete kar do
     wb.save(EXCEL_FILE)
     print(f"Data saved with Links to → {EXCEL_FILE}")
 else:
@@ -164,9 +163,9 @@ print("Sending Email...")
 msg = MIMEMultipart()
 msg['From'] = YOUR_EMAIL
 msg['To'] = TO_EMAIL
-msg['Subject'] = 'Blinkit - Latest Rosier Products'
+msg['Subject'] = 'Blinkit - Latest Rosier Products (Hyperlinked)'
 
-body = f"Hi Automailer PFA Rosier blinkit products.\nTotal: {len(product_details)}"
+body = f"Hi Automailer PFA Rosier blinkit products.\nC\nTotal: {len(product_details)}"
 msg.attach(MIMEText(body, 'plain'))
 
 with open(EXCEL_FILE, 'rb') as attachment:
